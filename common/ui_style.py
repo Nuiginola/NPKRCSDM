@@ -619,6 +619,21 @@ def inject_etabs_css() -> None:
   [class*="st-key-etabscard-"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div { font-size:12.5px !important; height:30px !important; min-height:30px !important; }
   [class*="st-key-etabscard-"] [data-testid="stHorizontalBlock"] { padding:6px 10px !important; gap:10px !important; min-height:38px; }
 }
+/* ===== แท็บเล็ต/มือถือ (จอแคบ): แถวกรอกในการ์ด ETABS ให้ป้ายอยู่บน–ช่องกรอกอยู่ล่าง =====
+   กันปัญหาช่อง selectbox เบียดจนป้ายชื่อถูกบีบเรียงเป็นแนวตั้งทีละตัวอักษรบนไอแพด */
+@media (max-width:1024px) {
+  [class*="st-key-etabscard-"] [data-testid="stHorizontalBlock"] {
+    flex-wrap:wrap !important; row-gap:2px !important; min-height:0 !important; align-items:stretch !important;
+  }
+  [class*="st-key-etabscard-"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+    flex:1 1 100% !important; min-width:100% !important; width:100% !important;
+  }
+  .etabs-lbl { line-height:1.35 !important; white-space:normal !important; word-break:normal !important; overflow-wrap:normal !important; margin-bottom:2px; }
+  .etabs-unit { line-height:1.5 !important; text-align:left !important; }
+  [class*="st-key-etabscard-"] [data-testid="stNumberInput"],
+  [class*="st-key-etabscard-"] [data-testid="stSelectbox"],
+  [class*="st-key-etabscard-"] [data-testid="stTextInput"] { width:100% !important; }
+}
 </style>
 """, unsafe_allow_html=True)
 
