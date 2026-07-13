@@ -24,10 +24,15 @@ import base64
 import hashlib
 import json
 import os
+import sys
 import tempfile
 
 import streamlit as st
 import streamlit.components.v1 as components
+
+# เดสก์ท็อป (Windows + pywebview) = เปิดรายงานเป็นหน้าต่างเนทีฟ
+# คลาวด์/มือถือ (Linux, ไม่มี pywebview) = แสดงรายงานฝังในหน้าเว็บแทน
+_IS_DESKTOP = sys.platform.startswith("win")
 
 # ---------------------------------------------------------------------------
 # HTML shell ของหน้าต่าง Preview — โทเคน __REPORT_B64__ ถูกแทนด้วย base64 ของ report_html
@@ -261,7 +266,21 @@ def open_preview_button(label: str, report_html: str, key: str = "",
     แล้วให้ปุ่มเรียก window.pywebview.api.open_preview(tempPath) เพื่อให้ฝั่งโปรแกรม
     เปิดหน้าต่างเนทีฟใหม่ชี้ไปที่ไฟล์นั้น — **ไม่ใช้ window.open(blob) เพราะ WebView2
     ไม่เปิดหน้าต่างให้ (พยายามส่ง blob: URL ให้ OS เปิด)** ส่งผ่านหน้าเว็บแค่ path สั้นๆ
+
+    บนคลาวด์/มือถือ (ไม่ใช่ Windows) ไม่มี pywebview — จึงแสดงรายการคำนวณ "ฝังในหน้า"
+    (iframe) โดยกดปุ่มเพื่อเปิด/ปิด แทนการเปิดหน้าต่างเนทีฟ ทำให้ดูรายงานบนไอแพด/มือถือได้
     """
+    # ===== คลาวด์/มือถือ: แสดงรายการคำนวณฝังในหน้า (กดเปิด/ปิด) =====
+    if not _IS_DESKTOP:
+        show_key = f"_pvshow_{key}"
+        if st.button(label, key=f"_pvbtn_{key}", use_container_width=True):
+            st.session_state[show_key] = not st.session_state.get(show_key, False)
+        if st.session_state.get(show_key):
+            st.caption("💡 เลื่อนดูรายงานด้านล่าง — บันทึกเป็น PDF ได้จากปุ่มดาวน์โหลด")
+            components.html(report_html, height=1000, scrolling=True)
+        return
+
+    # ===== เดสก์ท็อป (pywebview): เปิดหน้าต่างเนทีฟ (โค้ดเดิม) =====
     shell = build_preview_shell(report_html)
     data = shell.encode("utf-8")
     digest = hashlib.md5(data).hexdigest()
