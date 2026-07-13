@@ -20,8 +20,69 @@ from common.project_store import consume_pending_load, save_item
 from common.report import build_column_spiral_report_html
 from common.ui_style import (
     bar_type_label as _bar_type_label,
-    inject_card_css, input_card, metric_card_row,
+    inject_card_css, input_card, metric_card_row, render_calc_sheet,
 )
+
+
+def _build_calc_sections(inp, result):
+    """วิธีการคำนวณและสูตรที่ใช้ (เสากลม ปลอกเกลียว) — ดึงค่าจาก result (ไม่คำนวณซ้ำ)"""
+    s = result.slenderness
+    sp = result.spiral
+    axial = [
+        {"desc": "พื้นที่หน้าตัดเสากลม (Gross area)",
+         "formula": "A<sub>g</sub> = π·D²/4", "sub": f"π×{inp.diameter_cm:.0f}²/4",
+         "result": f"{result.ag_cm2:,.0f} cm²"},
+        {"desc": "ขอบเขตเหล็กยืน (1%–8% ของ A<sub>g</sub>)",
+         "formula": "A<sub>s,min</sub> = 0.01A<sub>g</sub> , A<sub>s,max</sub> = 0.08A<sub>g</sub>",
+         "result": f"{result.as_min_cm2:.1f} – {result.as_max_cm2:.1f} cm²"},
+        {"desc": "เลือกใช้เหล็กยืน",
+         "formula": (f"ใช้ {result.reinf_label} → A<sub>s</sub> = {result.as_provided_cm2:.2f} cm² "
+                     f"(ρ<sub>g</sub> = {result.rho_g*100:.2f}%)"),
+         "result": "ผ่าน ✓" if result.as_min_cm2 <= result.as_provided_cm2 <= result.as_max_cm2 else "ตรวจสอบ ρg"},
+        {"desc": "กำลังรับแรงตามแนวแกนสูงสุด (เสาปลอกเกลียว)",
+         "formula": "P<sub>o</sub> = 0.85f'<sub>c</sub>(A<sub>g</sub>−A<sub>s</sub>) + f<sub>y</sub>A<sub>s</sub>",
+         "result": f"{result.po_kg:,.0f} kg → φP<sub>n,max</sub> = 0.85·φ·P<sub>o</sub> = {result.phi_pn_max_kg:,.0f} kg"},
+    ]
+    slender = [
+        {"desc": "ตรวจสอบความชะลูด (Slenderness)",
+         "formula": "kL<sub>u</sub>/r &nbsp;(เกณฑ์เสาสั้น ≤ 22)",
+         "result": f"{s.klu_r:.1f} → " + ("เสาสั้น (ไม่ต้องขยายโมเมนต์)" if s.is_short else "เสาชะลูด (ต้องขยายโมเมนต์)")},
+    ]
+    if not s.is_short:
+        slender.append(
+            {"desc": "ตัวขยายโมเมนต์ (Moment magnification)",
+             "formula": (f"EI = {s.ei_tm2:,.1f} t·m² , P<sub>c</sub> = {s.pc_ton:,.1f} ton , "
+                         f"δ<sub>ns</sub> = C<sub>m</sub>/(1−P<sub>u</sub>/0.75P<sub>c</sub>) = {s.delta_ns:.2f}"),
+             "result": f"M<sub>u,design</sub> = δ<sub>ns</sub>·M<sub>u</sub> = {s.mu_design_kgm:,.0f} kg·m"})
+    pm = [
+        {"desc": f"กำลังรับโมเมนต์ที่ระดับ P<sub>u</sub> = {inp.pu_kg:,.0f} kg (จาก P-M Interaction Diagram)",
+         "formula": "φM<sub>n</sub> (ที่ P<sub>u</sub>)", "result": f"{result.phi_mn_capacity_at_pu_kgm:,.0f} kg·m"},
+        {"desc": "อัตราส่วนการใช้งาน (Utilization)",
+         "formula": "M<sub>u,design</sub> / φM<sub>n</sub>",
+         "sub": f"{s.mu_design_kgm:,.0f} / {result.phi_mn_capacity_at_pu_kgm:,.0f}",
+         "result": f"{result.utilization:.2f} " + ("(≤ 1.0) ผ่าน ✓" if result.utilization <= 1.0 else "(> 1.0) ไม่ผ่าน ✗")},
+        {"desc": "ผลการออกแบบโดยรวม",
+         "formula": "ตรวจสอบกำลังรับแรงตามแนวแกนและโมเมนต์ร่วมกัน",
+         "result": "ผ่าน ✓" if result.design_ok else "ไม่ผ่าน ✗"},
+    ]
+    spiral = [
+        {"desc": "อัตราส่วนปริมาตรเหล็กเกลียวขั้นต่ำ (Minimum spiral ratio)",
+         "formula": "ρ<sub>s,min</sub> = 0.45(A<sub>g</sub>/A<sub>ch</sub> − 1)(f'<sub>c</sub>/f<sub>yt</sub>)",
+         "result": f"{sp.rho_s_min*100:.2f}% (A<sub>ch</sub> = {sp.ach_cm2:,.0f} cm²)"},
+        {"desc": "ช่วงระยะเกลียวที่ยอมให้ (Pitch limits)",
+         "formula": "s<sub>min,code</sub> ≤ s ≤ s<sub>max</sub>",
+         "result": f"{sp.s_min_code_cm:.2f} – {sp.s_max_cm:.2f} cm"},
+        {"desc": "เลือกใช้ระยะเกลียว (Spiral pitch)",
+         "formula": (f"ใช้ {result.reinf_label_spiral} &nbsp; (s = {sp.s_use_cm:.2f} cm"
+                     + (", ปรับอัตโนมัติให้อยู่ในช่วง" if sp.auto_adjusted else "") + ")"),
+         "result": "ผ่าน ✓" if sp.spiral_ok else ("ปรับขนาดไม่ได้" if not sp.feasible else "ไม่ผ่าน ✗")},
+    ]
+    return [
+        {"title": "เหล็กเสริมตามแนวแกนและกำลังรับแรงอัด (Longitudinal Steel & Axial Capacity)", "steps": axial},
+        {"title": "ความชะลูดและการขยายโมเมนต์ (Slenderness & Moment Magnification)", "steps": slender},
+        {"title": "ตรวจสอบกำลังรับแรงอัดร่วมโมเมนต์ (P-M Interaction Check)", "steps": pm},
+        {"title": "การออกแบบเหล็กปลอกเกลียว (Spiral Design)", "steps": spiral},
+    ]
 
 inject_card_css()
 st.header("4.2 เสากลม (Circular Spiral Column)")
@@ -229,6 +290,10 @@ if "column_spiral_result" in st.session_state:
                            f"→ {result.spiral.s_use_cm:.1f} ซม. ให้อยู่ในช่วงที่ผ่านเกณฑ์")
             if not result.spiral.feasible:
                 st.caption("↳ แม้ใช้เหล็กปลอกเส้นใหญ่สุดก็ยังไม่ผ่าน — ขยายเสา/ลดระยะหุ้ม/ใช้เกรดสูงขึ้น")
+
+    st.write("")
+    st.subheader("วิธีการคำนวณและสูตรที่ใช้")
+    render_calc_sheet(_build_calc_sections(inp, result))
 
     st.subheader("รูปตัดเสา (Column Section)")
     section_png = draw_column_circular_section_png(

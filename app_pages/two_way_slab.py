@@ -19,11 +19,63 @@ from common.project_store import consume_pending_load, save_item
 from common.report import build_tw_report_html
 from common.ui_style import (
     bar_type_label as _bar_type_label,
-    inject_card_css, input_card, metric_card_row,
+    inject_card_css, input_card, metric_card_row, render_calc_sheet,
 )
 
 inject_card_css()
 st.header("1.3 พื้นสองทาง (Two-way Slab)")
+
+
+def _build_calc_sections(inp, result):
+    """วิธีการคำนวณและสูตรที่ใช้ (พื้นสองทาง — ACI Moment Coefficient Method) — ดึงค่าจาก
+    result (ไม่คำนวณซ้ำ)"""
+    def _dir_steps(positions, d_cm, label_reinf, as_prov, spacing_max, ok):
+        steps = [{"desc": "ระยะประสิทธิผล (Effective depth) d",
+                  "formula": "d = t − ระยะหุ้ม − ⌀/2", "result": f"{d_cm:.1f} cm"}]
+        for p in positions:
+            if not p.active:
+                continue
+            warn = " &nbsp;⚠️ หน้าตัดเล็กไป" if p.over_reinforced else ""
+            steps.append({
+                "desc": f"โมเมนต์และเหล็กที่ตำแหน่ง: {p.label_th}",
+                "formula": (f"สัมประสิทธิ์ C = {p.coeff:.4f} → M<sub>u</sub> = C·W<sub>u</sub>·S² = {p.mu_kgm:,.0f} kg·m/m "
+                            f"→ A<sub>s</sub> = ρ·b·d = {p.as_req_cm2_m:.2f} cm²/m{warn} &nbsp;(S = ช่วงสั้น)")})
+        steps.append({
+            "desc": "เลือกใช้เหล็กเสริม",
+            "formula": (f"ใช้ {label_reinf} &nbsp; (A<sub>s,จัดให้</sub> = {as_prov:.2f} cm²/m, "
+                        f"ระยะห่าง ≤ {spacing_max:.0f} cm)"),
+            "result": "ผ่าน ✓" if ok else "ไม่ผ่าน ✗"})
+        return steps
+
+    load = [
+        {"desc": "อัตราส่วนด้านสั้น/ด้านยาว (ตรวจว่าเป็นพื้นสองทาง)",
+         "formula": "m = S/L", "sub": f"{inp.S_m:.2f}/{inp.L_m:.2f}",
+         "result": f"{result.m_ratio:.3f} (> 0.50 = พื้นสองทาง)" if result.two_way_ok else f"{result.m_ratio:.3f} (≤ 0.50)"},
+        {"desc": "น้ำหนักบรรทุกประลัย (Factored load)",
+         "formula": "W<sub>u</sub> = 1.4(DL + SDL) + 1.7LL",
+         "sub": f"DL(พื้น)={result.dead_load_kg_m2:.0f}",
+         "result": f"{result.wu_kg_m2:.0f} kg/m²"},
+        {"desc": "ความหนาขั้นต่ำ (Minimum thickness)",
+         "formula": "t<sub>min</sub> = เส้นรอบรูป/180",
+         "result": f"{result.tmin_cm:.2f} cm — ใช้ t = {inp.t_cm:.1f} cm → " + ("ผ่าน ✓" if result.t_ok else "ไม่ผ่าน ✗")},
+        {"desc": "อัตราส่วนเหล็กเสริม (Reinforcement ratios)",
+         "formula": (f"ρ<sub>min</sub> = {result.rho_min:.4f} &nbsp; ρ<sub>b</sub> = {result.rho_b:.4f} &nbsp; "
+                     f"ρ<sub>max</sub> = 0.75ρ<sub>b</sub> = {result.rho_max:.4f} &nbsp;(β₁ = {result.beta1:.3f})")},
+    ]
+    shear = [{"desc": "ตรวจสอบแรงเฉือน (Shear)",
+              "formula": "V<sub>u</sub> ≤ φV<sub>c</sub> = φ·0.53√f'<sub>c</sub>·b·d",
+              "sub": f"{result.vu_kg:,.0f} ≤ {result.phi_vc_kg:,.0f} kg",
+              "result": "ผ่าน ✓" if result.shear_ok else "ไม่ผ่าน ✗"}]
+    return [
+        {"title": "การวิเคราะห์น้ำหนักบรรทุกและความหนาพื้น (Load & Thickness)", "steps": load},
+        {"title": "เหล็กเสริมทิศทางสั้น (Flexural Design — Short direction S)",
+         "steps": _dir_steps(result.short_positions, result.short_d_cm, result.reinf_label_short,
+                             result.as_provided_short_cm2_m, result.short_spacing_max_cm, result.short_reinf_ok)},
+        {"title": "เหล็กเสริมทิศทางยาว (Flexural Design — Long direction L)",
+         "steps": _dir_steps(result.long_positions, result.long_d_cm, result.reinf_label_long,
+                             result.as_provided_long_cm2_m, result.long_spacing_max_cm, result.long_reinf_ok)},
+        {"title": "ตรวจสอบแรงเฉือน (Shear Check)", "steps": shear},
+    ]
 
 
 def _tw_end_states(positions):
@@ -93,8 +145,18 @@ case = TWO_WAY_CASES[case_key]
 with row1_c2:
     with st.container(border=True):
         st.markdown("**กรณีที่เลือก (Case)**")
-        st.text_input("กรณีที่เลือก", value=f"{CASE_KEYS.index(case_key) + 1} — {case['label_th']}",
-                      disabled=True, label_visibility="collapsed")
+        # ใช้ div ที่ wrap ข้อความได้แทน st.text_input(disabled=True) เดิม — text_input เป็น
+        # <input> บรรทัดเดียว ข้อความยาว (เช่น "2 — ไม่ต่อเนื่อง 1 ด้าน (1 Edge Discontinuous)")
+        # จะถูกตัดมองไม่เห็นส่วนท้ายเมื่อกล่องแคบ (ย่อจอ/แบ่งหน้าต่าง) — div ให้ข้อความขึ้นบรรทัด
+        # ใหม่แทนการซ่อน จึงอ่านได้ครบเสมอไม่ว่าหน้าต่างจะแคบแค่ไหน
+        st.markdown(
+            f'<div style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:8px; '
+            f'padding:9px 14px; min-height:44px; display:flex; align-items:center; '
+            f'font-size:18px; font-weight:600; color:#1D4ED8; line-height:1.3; '
+            f'white-space:normal; overflow-wrap:break-word; word-break:break-word;">'
+            f'{CASE_KEYS.index(case_key) + 1} — {case["label_th"]}</div>',
+            unsafe_allow_html=True,
+        )
 with row1_c3:
     with st.container(border=True):
         st.markdown("**รหัสพื้น (Slab No.)**")
@@ -272,6 +334,10 @@ if "tw_result" in st.session_state:
             st.write(f"**เหล็กที่ใช้จริง: {result.reinf_label_long}** "
                      f"(As={result.as_provided_long_cm2_m:.2f} cm²/m, ระยะห่างสูงสุด={result.long_spacing_max_cm:.1f} cm.)")
             st.write("ผลตรวจสอบ:", "ผ่าน ✅" if result.long_reinf_ok else "ไม่ผ่าน ❌")
+
+    st.write("")
+    st.subheader("วิธีการคำนวณและสูตรที่ใช้")
+    render_calc_sheet(_build_calc_sections(inp, result))
 
     st.subheader("รูปขยายรายละเอียดการเสริมเหล็ก")
     s_end1, s_end2 = _tw_end_states(result.short_positions)

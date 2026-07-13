@@ -18,7 +18,39 @@ from common.pdf_export import download_report_button
 from common.report_preview import open_preview_button, mark_calc_pending_sync, sync_report_html
 from common.project_store import consume_pending_load, save_item
 from common.report import build_gs_report_html
-from common.ui_style import inject_card_css, input_card, metric_card_row
+from common.ui_style import inject_card_css, input_card, metric_card_row, render_calc_sheet
+
+
+def _build_calc_sections(inp, result):
+    """วิธีการคำนวณและสูตรที่ใช้ (พื้นวางบนดิน) — เหล็กกันร้าว/หดตัว คิดจาก 3 วิธี เลือกมากสุด
+    ดึงค่าจาก result (ไม่คำนวณซ้ำ)"""
+    load = [
+        {"desc": "น้ำหนักบรรทุกประลัย (Factored load)",
+         "formula": "W<sub>u</sub> = 1.4(DL + SDL) + 1.7LL",
+         "sub": f"DL(พื้น)={result.dead_load_kg_m2:.0f}",
+         "result": f"{result.wu_kg_m2:.0f} kg/m²"},
+        {"desc": "ตรวจสอบสัดส่วนขนาดพื้น (ด้านยาว ≥ ด้านสั้น)",
+         "formula": "L ≥ S", "sub": f"{inp.L_m:.1f} ≥ {inp.S_m:.1f} m",
+         "result": "ผ่าน ✓" if result.L_ge_S_ok else "ไม่ผ่าน ✗"},
+    ]
+    steel = [
+        {"desc": "วิธีที่ 1 — เหล็กกันการหดตัว/อุณหภูมิ (Temperature/Shrinkage)",
+         "formula": "A<sub>s,temp</sub> = ρ<sub>temp</sub> · b · t",
+         "result": f"{result.as_temperature_cm2_m:.2f} cm²/m"},
+        {"desc": "วิธีที่ 2 — แรงเสียดทานพื้นดิน (Subgrade Drag)",
+         "formula": "A<sub>s,drag</sub> = F·L·W<sub>u</sub> / (1.43·f<sub>y</sub>) &nbsp;(F = 1.5)",
+         "result": f"{result.as_subgrade_drag_cm2_m:.2f} cm²/m"},
+        {"desc": "วิธีที่ 3 — วิธี PCA (พื้นที่มีรถวิ่งผ่าน)",
+         "formula": "A<sub>s,PCA</sub> = 1800·S·t / f<sub>y</sub>",
+         "result": f"{result.as_pca_cm2_m:.2f} cm²/m"},
+        {"desc": "เลือกใช้เหล็กเสริม (ต้อง ≥ ทั้ง 3 วิธี)",
+         "formula": f"ใช้ {result.reinf_label} → A<sub>s,จัดให้</sub> = {result.as_provided_cm2_m:.2f} cm²/m",
+         "result": "ผ่าน ✓" if result.all_reinf_ok else "ไม่ผ่าน ✗"},
+    ]
+    return [
+        {"title": "การวิเคราะห์น้ำหนักบรรทุกและขนาดพื้น (Load & Geometry)", "steps": load},
+        {"title": "เหล็กเสริมกันการหดตัว/อุณหภูมิ — 3 วิธี (Shrinkage/Temperature Steel)", "steps": steel},
+    ]
 
 inject_card_css()
 st.header("1.1 พื้นวางบนดิน (Slab on Ground)")
@@ -190,6 +222,10 @@ if "gs_result" in st.session_state:
                 st.success(f"ผ่านทั้งหมด: {result.reinf_label}")
             else:
                 st.error("ไม่ผ่านอย่างน้อย 1 ข้อ — เพิ่มขนาดเหล็กหรือลดระยะห่าง")
+
+    st.write("")
+    st.subheader("วิธีการคำนวณและสูตรที่ใช้")
+    render_calc_sheet(_build_calc_sections(inp, result))
 
     st.subheader("รูปขยายรายละเอียดการเสริมเหล็ก")
     diagram_png = draw_gs_detail_png(inp.t_cm, inp.main_bar_dia_mm, inp.main_bar_spacing_cm)

@@ -20,9 +20,10 @@ from common.project_store import consume_pending_load, save_item
 from common.report import build_beam_report_html
 from common.ui_style import (
     bar_type_label as _bar_type_label,
-    inject_card_css, input_card, metric_card_row,
+    inject_card_css, input_card, metric_card_row, render_calc_sheet,
     inject_etabs_css, etabs_card, etabs_group, etabs_number, etabs_select, etabs_text,
 )
+from common.design_params import PHI_B, PHI_V
 
 inject_card_css()
 inject_etabs_css()
@@ -37,6 +38,99 @@ def _scaled_width(png_bytes, factor):
         return max(1, int(_PILImage.open(_io.BytesIO(png_bytes)).width * factor))
     except Exception:
         return None
+
+def _build_calc_sections(inp, result):
+    """สร้างขั้นตอน "วิธีการคำนวณและสูตรที่ใช้" ของคานช่วงเดียว — ดึงค่าที่โมดูลคำนวณเสร็จแล้ว
+    จาก result มาแสดง (ไม่คำนวณเลขซ้ำ) พร้อมสูตรและการแทนค่า สไตล์แผ่นคำนวณของวิศวกร"""
+    fy_main = GS_STEEL_FY_KSC[inp.main_steel_type]
+    fy_stir = GS_STEEL_FY_KSC[inp.stirrup_steel_type]
+    b = inp.b_cm
+    fc = inp.fc_ksc
+    d = result.bottom.d_cm
+    flex = result.bottom
+    stir = result.stirrup
+
+    flex_steps = [
+        {"desc": "ระยะประสิทธิผล (Effective depth) d",
+         "formula": "d = h − ระยะหุ้ม − ⌀ปลอก − ⌀หลัก/2",
+         "result": f"{d:.1f} cm"},
+        {"desc": "อัตราส่วนเหล็กเสริม (Reinforcement ratios)",
+         "formula": (f"ρ<sub>min</sub> = 14/f<sub>y</sub> = {result.rho_min:.4f}<br>"
+                     f"ρ<sub>b</sub> = 0.85·β₁·(f'<sub>c</sub>/f<sub>y</sub>)·6120/(6120+f<sub>y</sub>) = {result.rho_b:.4f}"
+                     f" &nbsp;(β₁ = {result.beta1:.3f})<br>"
+                     f"ρ<sub>max</sub> = 0.75·ρ<sub>b</sub> = {result.rho_max:.4f}")},
+        {"desc": "สัมประสิทธิ์ต้านทานโมเมนต์ R<sub>u</sub>",
+         "formula": "R<sub>u</sub> = M<sub>u</sub>/(φ<sub>b</sub>·b·d²)",
+         "sub": f"{result.mu_max_kg_m*100:,.0f}/({PHI_B:.2f}×{b:.0f}×{d:.1f}²)",
+         "result": f"{flex.ru_ksc:.2f} ksc"},
+    ]
+    if not flex.doubly_reinforced:
+        flex_steps += [
+            {"desc": "อัตราส่วนเหล็กที่ต้องการ",
+             "formula": (f"ρ<sub>req</sub> = 0.85(f'<sub>c</sub>/f<sub>y</sub>)"
+                         f"[1−√(1−2R<sub>u</sub>/0.85f'<sub>c</sub>)] = {flex.rreq:.4f}"),
+             "result": f"ใช้ ρ = max(ρ<sub>req</sub>, ρ<sub>min</sub>) = {flex.rho_used:.4f}"},
+            {"desc": "พื้นที่เหล็กรับแรงดึงที่ต้องการ A<sub>s</sub>",
+             "formula": "A<sub>s</sub> = ρ·b·d",
+             "sub": f"{flex.rho_used:.4f}×{b:.0f}×{d:.1f}",
+             "result": f"{flex.as_req_cm2:.2f} cm²"},
+        ]
+    else:
+        flex_steps += [
+            {"desc": "โมเมนต์เกินกำลังเหล็กชั้นเดียว → ต้องเสริมเหล็กรับแรงอัด (Doubly-reinforced)",
+             "formula": (f"M<sub>u1,max</sub> = {flex.mu1_kgm:,.0f} kg·m &nbsp; (ที่ ρ<sub>max</sub>)<br>"
+                         f"M<sub>u2</sub> = M<sub>u</sub> − M<sub>u1,max</sub> = {flex.mu2_kgm:,.0f} kg·m"),
+             "note": "โมเมนต์เกินกว่าเหล็กรับแรงดึงชั้นเดียวจะรับได้ จึงเพิ่มเหล็กรับแรงอัดช่วย"},
+            {"desc": "พื้นที่เหล็กรวม (รับแรงดึง)",
+             "formula": "A<sub>s</sub> = A<sub>s1</sub> + A<sub>s2</sub>",
+             "result": f"{flex.as_req_cm2:.2f} cm² (เหล็กรับแรงอัด A<sub>s2</sub> = {flex.as_comp_req_cm2:.2f} cm²)"},
+        ]
+    flex_steps.append(
+        {"desc": "เลือกใช้เหล็กเสริม",
+         "formula": (f"ใช้ {result.reinf_label_bottom} → A<sub>s,จัดให้</sub> = {flex.as_provided_cm2:.2f} cm² "
+                     f"{'≥' if flex.reinf_ok else '<'} A<sub>s,ต้องการ</sub> = {flex.as_req_cm2:.2f} cm²"),
+         "result": "ผ่าน ✓" if flex.reinf_ok else "ไม่ผ่าน ✗"})
+
+    shear_steps = [
+        {"desc": "กำลังรับแรงเฉือนของคอนกรีต V<sub>c</sub>",
+         "formula": "V<sub>c</sub> = 0.53√f'<sub>c</sub>·b·d",
+         "sub": f"0.53×√{fc:.0f}×{b:.0f}×{d:.1f}",
+         "result": f"{stir.vc_kg:,.0f} kg → φV<sub>c</sub> = {stir.phi_vc_kg:,.0f} kg"},
+        {"desc": "แรงเฉือนที่เหล็กปลอกต้องรับ V<sub>s</sub>",
+         "formula": "V<sub>s</sub> = V<sub>u</sub>/φ<sub>v</sub> − V<sub>c</sub>",
+         "sub": f"{result.vu_max_kg:,.0f}/{PHI_V:.2f} − {stir.vc_kg:,.0f}",
+         "result": f"{stir.vs_req_kg:,.0f} kg"},
+        {"desc": f"พื้นที่เหล็กปลอก A<sub>v</sub> ({inp.stirrup_legs} ขา)",
+         "formula": f"A<sub>v</sub> = {inp.stirrup_legs} × พื้นที่เหล็ก⌀{inp.stirrup_bar_dia_mm:.0f}",
+         "result": f"{stir.av_cm2:.2f} cm²"},
+    ]
+    if stir.vs_req_kg > 0:
+        shear_steps.append(
+            {"desc": "ระยะเรียงตามกำลังรับแรงเฉือน",
+             "formula": "s = A<sub>v</sub>·f<sub>y</sub>·d / V<sub>s</sub>",
+             "result": f"{stir.s_max_from_vs_cm:.1f} cm"})
+    else:
+        shear_steps.append(
+            {"desc": "ตรวจสอบความเพียงพอของคอนกรีต",
+             "formula": "V<sub>u</sub> ≤ φV<sub>c</sub> : คอนกรีตรับแรงเฉือนได้เพียงพอ",
+             "note": "ไม่ต้องการเหล็กปลอกจากกำลัง — ใช้ระยะเรียงสูงสุดตามข้อกำหนดขั้นต่ำ"})
+    shear_steps += [
+        {"desc": "ระยะเรียงสูงสุดตามมาตรฐาน",
+         "formula": "s<sub>max,code</sub> = min(d/2 หรือ d/4, 60 หรือ 30 cm) ตามระดับ V<sub>s</sub>",
+         "result": f"{stir.s_max_code_cm:.1f} cm"},
+        {"desc": "ระยะเรียงที่ใช้ได้",
+         "formula": "s<sub>max</sub> = min(ระยะตามกำลัง, ระยะตามมาตรฐาน)",
+         "result": f"{stir.s_max_cm:.1f} cm"},
+        {"desc": "เลือกใช้เหล็กปลอก",
+         "formula": (f"ใช้ {result.reinf_label_stirrup} "
+                     f"{'≤' if stir.stirrup_ok else '>'} s<sub>max</sub> = {stir.s_max_cm:.1f} cm"),
+         "result": "ผ่าน ✓" if stir.stirrup_ok else ("หน้าตัดเล็กเกินไป" if stir.section_too_small else "ไม่ผ่าน ✗")},
+    ]
+    return [
+        {"title": "การออกแบบเหล็กรับแรงดัด (Flexural Design)", "steps": flex_steps},
+        {"title": "การออกแบบเหล็กปลอกรับแรงเฉือน (Shear Design)", "steps": shear_steps},
+    ]
+
 
 # รองรับ "เปิดกลับมาแก้ไข" จากรายการที่บันทึกไว้ (คลิกจากแถบด้านข้าง)
 if "beam_form_gen" not in st.session_state:
@@ -150,6 +244,20 @@ inp = BeamSingleSpanInput(
     stirrup_spacing_use_cm=stirrup_spacing,
 )
 
+# --- ทางเลือก: ออกแบบรับแรงบิด (Torsion) ตาม ACI 318 — ผู้ใช้กรอก Tu เอง ---
+with st.container(border=True):
+    _tc1, _tc2 = st.columns([1.1, 1.0])
+    with _tc1:
+        torsion_enabled = st.checkbox(
+            "ออกแบบรับแรงบิด (Torsion) ตาม ACI 318",
+            value=_loaded.get("torsion_enabled", False), key=f"beam_tors_en_{gen}")
+    with _tc2:
+        tu_kgm = st.number_input("แรงบิดประลัย Tu (kg·m)", min_value=0.0,
+                                 value=float(_loaded.get("tu_kgm", 0.0)), step=50.0,
+                                 key=f"beam_tu_{gen}", disabled=not torsion_enabled,
+                                 help="แรงบิดประลัย (factored) ที่กระทำต่อคาน — โปรแกรมจะคำนวณเหล็กปลอก"
+                                      "และเหล็กยืนรับแรงบิดเพิ่มตามวิธี space truss ของ ACI 318")
+
 st.write("")
 bcol1, bcol2, bcol3 = st.columns(3)
 with bcol1:
@@ -161,6 +269,8 @@ with bcol1:
             st.session_state["beam_input"] = inp
             st.session_state["beam_result"] = calc_beam(inp)
             st.session_state["beam_project"] = {"beam_name": beam_name}
+            st.session_state["beam_torsion_enabled"] = bool(torsion_enabled)
+            st.session_state["beam_tu_kgm"] = float(tu_kgm)
             mark_calc_pending_sync("bs")
 with bcol2:
     if st.button("💾 บันทึกรายการนี้", key="npk-btn-save-bs", use_container_width=True):
@@ -232,6 +342,40 @@ if "beam_result" in st.session_state:
             st.write(f"**เหล็กที่ใช้จริง: {result.reinf_label_stirrup}**")
             st.write("ผลตรวจสอบ:", "ผ่าน ✅" if result.stirrup.stirrup_ok else "ไม่ผ่าน ❌")
 
+    # ทางเลือก: ออกแบบรับแรงบิด (Torsion) — คำนวณเมื่อผู้ใช้เปิดใช้งานและกรอก Tu > 0
+    _calc_sections = _build_calc_sections(inp, result)
+    _tor = None
+    if st.session_state.get("beam_torsion_enabled") and st.session_state.get("beam_tu_kgm", 0.0) > 0:
+        from common.torsion import design_beam_torsion
+        from modules.beam_single_span import COVER_CM as _BEAM_COVER
+        _fyv = GS_STEEL_FY_KSC[inp.stirrup_steel_type]
+        _fyl = GS_STEEL_FY_KSC[inp.main_steel_type]
+        _tor = design_beam_torsion(
+            st.session_state["beam_tu_kgm"], result.vu_max_kg, inp.b_cm, inp.h_cm,
+            result.bottom.d_cm, inp.fc_ksc, _fyv, _fyl, _BEAM_COVER,
+            inp.stirrup_bar_dia_mm, inp.stirrup_legs, result.stirrup.vc_kg,
+            result.stirrup.av_cm2, inp.stirrup_spacing_use_cm)
+        _tstatus = "warn" if (_tor.required and not _tor.section_ok) else (_tor.stirrup_ok if _tor.required else True)
+        metric_card_row([
+            {"name": "แรงบิด Tu", "sym": "Torsion", "value": f"{_tor.tu_kgm:,.0f}", "unit": "kg·m",
+             "ok": None},
+            {"name": "ต้องออกแบบแรงบิด?", "sym": f"เกณฑ์ {_tor.tth_kgm:,.0f}", "value": "ใช่" if _tor.required else "ไม่",
+             "unit": "kg·m", "ok": None},
+            {"name": "เหล็กปลอกรับบิด At/s", "sym": "ต่อขา", "value": f"{_tor.at_s:.4f}", "unit": "cm²/cm",
+             "ok": _tor.stirrup_ok if _tor.required else None,
+             "reason": f"@{_tor.s_required_cm:.0f}cm" if _tor.required else "-"},
+            {"name": "เหล็กยืนรับบิด Al", "sym": "รวมรอบรูป", "value": f"{_tor.al_design_cm2:.2f}", "unit": "cm²",
+             "ok": _tor.section_ok if _tor.required else None,
+             "reason": "หน้าตัดพอ" if _tor.section_ok else "หน้าตัดเล็กไป"},
+        ])
+        st.write("")
+        from common.torsion import build_torsion_section
+        _calc_sections = _calc_sections + [build_torsion_section(_tor, result.stirrup_bar_type)]
+
+    st.write("")
+    st.subheader("วิธีการคำนวณและสูตรที่ใช้")
+    render_calc_sheet(_calc_sections)
+
     st.subheader("กราฟแรงเฉือน & โมเมนต์ (SFD/BMD)")
     sfd_bmd_png = draw_beam_sfd_bmd_png(
         result.x_arr, result.v_arr, result.m_arr, inp.L_m,
@@ -244,7 +388,8 @@ if "beam_result" in st.session_state:
     section_png = draw_beam_section_png(
         inp.b_cm, inp.h_cm, result.bottom.bars_per_layer, result.top.bars_per_layer,
         inp.main_bar_dia_mm, result.main_bar_type,
-        inp.stirrup_bar_dia_mm, inp.stirrup_spacing_use_cm, result.stirrup_bar_type)
+        inp.stirrup_bar_dia_mm, inp.stirrup_spacing_use_cm, result.stirrup_bar_type,
+        torsion=_tor)
     _sec_w = _scaled_width(section_png, 1.4)   # ขยายรูปตัดคาน 1.4 เท่า
     if _sec_w:
         st.image(section_png, caption="Beam Section", width=_sec_w)

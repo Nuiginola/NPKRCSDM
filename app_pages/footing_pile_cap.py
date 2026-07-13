@@ -23,8 +23,77 @@ from common.project_store import consume_pending_load, save_item
 from common.report import build_pile_cap_report_html
 from common.ui_style import (
     bar_type_label as _bar_type_label,
-    inject_card_css, input_card, metric_card_row,
+    inject_card_css, input_card, metric_card_row, render_calc_sheet,
 )
+
+
+def _build_calc_sections(inp, result):
+    """วิธีการคำนวณและสูตรที่ใช้ (ฐานรากเสาเข็ม / Pile Cap) — ดึงค่าจาก result (ไม่คำนวณซ้ำ)"""
+    g = result.geometry
+    pls = result.pile_load_service
+    geo = [
+        {"desc": "ขนาดฐานรากและการจัดเรียงเสาเข็ม",
+         "formula": f"เสาเข็ม {g.n_piles} ต้น (ระยะห่าง {g.spacing_cm:.0f} cm, ระยะขอบ {g.edge_margin_cm:.0f} cm)",
+         "result": f"A×B = {g.A_cm:.0f}×{g.B_cm:.0f} cm"},
+        {"desc": "ความหนาฐานรากและระยะประสิทธิผล",
+         "formula": f"น้ำหนักประลัย W<sub>u</sub> = {result.wu_kg:,.0f} kg → ลงเสาเข็ม {result.pile_load_factored_kg:,.0f} kg/ต้น",
+         "result": f"T = {result.t_cm:.0f} cm (d₁ = {result.d1_cm:.1f}, d₂ = {result.d2_cm:.1f} cm)"},
+        {"desc": "ตรวจสอบกำลังรับน้ำหนักของเสาเข็ม (Service)",
+         "formula": "น้ำหนักลงเสาเข็ม ≤ กำลังปลอดภัย (Safe Load)",
+         "sub": f"{pls.service_load_per_pile_ton:.2f} ≤ {pls.safe_load_ton:.2f} ton/ต้น",
+         "result": "ผ่าน ✓" if pls.capacity_ok else "ไม่ผ่าน ✗"},
+    ]
+    bs, cp, pp = result.beam_shear, result.column_punching, result.pile_punching
+    shear = []
+    if getattr(bs, "applicable", False):
+        shear.append(
+            {"desc": "แรงเฉือนทางเดียว (One-way / Beam shear)",
+             "formula": "V<sub>u</sub> ≤ φV<sub>c</sub> = φ·0.53√f'<sub>c</sub>·b·d",
+             "sub": f"{bs.vu_kg:,.0f} ≤ {bs.phi_vc_kg:,.0f} kg",
+             "result": "ผ่าน ✓" if bs.shear_ok else "ไม่ผ่าน ✗"})
+    else:
+        shear.append(
+            {"desc": "แรงเฉือนทางเดียว (One-way / Beam shear)",
+             "formula": "หน้าตัดวิกฤตพ้นตำแหน่งเสาเข็มริมแล้ว — ไม่เข้าเงื่อนไขตรวจสอบ", "result": "—"})
+    shear += [
+        {"desc": "แรงเฉือนทะลุรอบเสา (Column Punching / Two-way)",
+         "formula": f"เส้นรอบรูปวิกฤต b<sub>o</sub> = {cp.bo_cm:.0f} cm , φV<sub>c</sub> รอบเสา",
+         "sub": f"V<sub>u</sub> = {cp.vu_kg:,.0f} ≤ φV<sub>c</sub> = {cp.phi_vc_kg:,.0f} kg",
+         "result": "ผ่าน ✓" if cp.shear_ok else "ไม่ผ่าน ✗"},
+        {"desc": "แรงเฉือนทะลุรอบเสาเข็ม (Pile Punching)",
+         "formula": f"เส้นรอบรูปรอบเสาเข็ม b<sub>o</sub> = {pp.bo_pile_cm:.0f} cm",
+         "sub": f"V<sub>u</sub> = {pp.vu_kg:,.0f} ≤ φV<sub>c</sub> = {pp.phi_vc_kg:,.0f} kg",
+         "result": "ผ่าน ✓" if pp.shear_ok else "ไม่ผ่าน ✗"},
+    ]
+
+    def _flex(f, label, tag):
+        note = "ออกแบบเต็มรูปแบบ" if f.full_design else "เหล็กเสริมขั้นต่ำ (ρmin)"
+        return [
+            {"desc": f"โมเมนต์ดัดที่หน้าเสา — ทิศทาง {tag}",
+             "formula": "M<sub>u</sub> = (ผลรวมแรงเสาเข็ม) × ระยะแขน (arm)",
+             "sub": f"ระยะแขน = {f.arm_cm:.0f} cm",
+             "result": f"{f.mu_kgm:,.0f} kg·m → R<sub>u</sub> = {f.ru_ksc:.2f} ksc"},
+            {"desc": f"เหล็กเสริม — ทิศทาง {tag} ({note})",
+             "formula": (f"A<sub>s</sub> = ρ·b·d (ρ = {f.rho_used:.4f}) = {f.as_req_cm2:.2f} cm² "
+                         f"→ ใช้ {label} (A<sub>s</sub> = {f.as_provided_cm2:.2f} cm²)"),
+             "result": "ผ่าน ✓" if f.reinf_ok else "ไม่ผ่าน ✗"},
+        ]
+    flex_steps = _flex(result.flex_1, result.reinf_label_1, "#1") + _flex(result.flex_2, result.reinf_label_2, "#2")
+    other = [
+        {"desc": "เหล็กทาบ/เหล็กหนวดกุ้ง (Dowel bar)",
+         "formula": "ระยะฝัง L<sub>d</sub> ที่มีจริง ≥ L<sub>bd</sub> ที่ต้องการ",
+         "sub": f"{result.dowel.ld_avail_cm:.1f} ≥ {result.dowel.lbd_cm:.1f} cm",
+         "result": "ผ่าน ✓" if result.dowel.dowel_ok else "ไม่ผ่าน ✗"},
+        {"desc": "ผลการออกแบบโดยรวม",
+         "formula": "ผ่านทุกเกณฑ์ (กำลังเสาเข็ม, แรงเฉือน, เหล็กเสริม, เหล็กทาบ)",
+         "result": "ผ่าน ✓" if result.design_ok else "ไม่ผ่าน ✗"},
+    ]
+    return [
+        {"title": "ขนาดฐานรากและกำลังรับน้ำหนักเสาเข็ม (Geometry & Pile Capacity)", "steps": geo},
+        {"title": "การตรวจสอบแรงเฉือน (Shear Checks)", "steps": shear},
+        {"title": "การออกแบบเหล็กเสริมรับแรงดัด (Flexural Design)", "steps": flex_steps},
+        {"title": "เหล็กทาบและสรุปผล (Dowel & Summary)", "steps": other},
+    ]
 
 inject_card_css()
 st.header("5.2 ฐานรากเสาเข็ม (Pile Cap)")
@@ -296,6 +365,10 @@ if "pc_result" in st.session_state:
 
             st.markdown("**สรุปผล**")
             st.write("ผลตรวจสอบโดยรวม:", "ผ่าน ✅" if result.design_ok else "ไม่ผ่าน ❌")
+
+    st.write("")
+    st.subheader("วิธีการคำนวณและสูตรที่ใช้")
+    render_calc_sheet(_build_calc_sections(inp, result))
 
     st.subheader("แปลนฐานรากเสาเข็ม (Pile Cap Plan)")
     plan_png = draw_pile_cap_plan_png(

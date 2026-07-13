@@ -20,8 +20,63 @@ from common.project_store import consume_pending_load, save_item
 from common.report import build_ow_report_html
 from common.ui_style import (
     bar_type_label as _bar_type_label,
-    inject_card_css, input_card, metric_card_row,
+    inject_card_css, input_card, metric_card_row, render_calc_sheet,
 )
+
+
+def _build_calc_sections(inp, result):
+    """วิธีการคำนวณและสูตรที่ใช้ (พื้นทางเดียว) — ดึงค่าจาก result ที่โมดูลคำนวณแล้ว (ไม่คำนวณซ้ำ)"""
+    S = inp.S_m
+    b = 100.0
+    d = next((p.d_cm for p in result.positions if p.active), result.positions[0].d_cm)
+    load = [
+        {"desc": "อัตราส่วนด้านสั้น/ด้านยาว (ตรวจว่าเป็นพื้นทางเดียว)",
+         "formula": "m = S/L", "sub": f"{inp.S_m:.2f}/{inp.L_m:.2f}",
+         "result": f"{result.m_ratio:.3f} (≤ 0.50 = พื้นทางเดียว)" if result.one_way_ok else f"{result.m_ratio:.3f} (> 0.50)"},
+        {"desc": "น้ำหนักบรรทุกประลัย (Factored load)",
+         "formula": "W<sub>u</sub> = 1.4(DL + SDL) + 1.7LL",
+         "sub": f"DL(พื้น)={result.dead_load_kg_m2:.0f}",
+         "result": f"{result.wu_kg_m2:.0f} kg/m²"},
+        {"desc": "ความหนาขั้นต่ำ (Minimum thickness)",
+         "formula": "t<sub>min</sub> = (S/denom)(0.40 + f<sub>y</sub>/7000)",
+         "result": f"{result.tmin_cm:.2f} cm — ใช้ t = {inp.t_cm:.1f} cm → " + ("ผ่าน ✓" if result.t_ok else "ไม่ผ่าน ✗")},
+    ]
+    flex = [
+        {"desc": "ระยะประสิทธิผล (Effective depth) d",
+         "formula": "d = t − ระยะหุ้ม − ⌀หลัก/2", "result": f"{d:.1f} cm"},
+        {"desc": "อัตราส่วนเหล็กเสริม (Reinforcement ratios)",
+         "formula": (f"ρ<sub>min</sub> = {result.rho_min:.4f} &nbsp; "
+                     f"ρ<sub>b</sub> = {result.rho_b:.4f} &nbsp; ρ<sub>max</sub> = 0.75ρ<sub>b</sub> = {result.rho_max:.4f}"
+                     f" &nbsp;(β₁ = {result.beta1:.3f})")},
+    ]
+    for p in result.positions:
+        if not p.active:
+            continue
+        warn = " &nbsp;⚠️ หน้าตัดเล็กไป" if p.over_reinforced else ""
+        flex.append({
+            "desc": f"โมเมนต์และเหล็กที่ตำแหน่ง: {p.label_th}",
+            "formula": (f"M<sub>u</sub> = {p.coeff:.4f}·W<sub>u</sub>·S² = {p.mu_kgm:,.0f} kg·m/m "
+                        f"→ A<sub>s</sub> = ρ·b·d = {p.as_req_cm2_m:.2f} cm²/m{warn}")})
+    flex.append({
+        "desc": "เลือกใช้เหล็กเสริมหลัก",
+        "formula": (f"ใช้ {result.reinf_label_main} &nbsp; (A<sub>s,จัดให้</sub> = {result.as_provided_cm2_m:.2f} cm²/m, "
+                    f"ระยะห่าง ≤ {result.main_spacing_max_cm:.0f} cm)"),
+        "result": "ผ่าน ✓" if result.main_reinf_ok else "ไม่ผ่าน ✗"})
+    other = [
+        {"desc": "เหล็กเสริมกันร้าว/กระจายแรง (แนว L)",
+         "formula": (f"A<sub>st,ต้องการ</sub> = {result.ast_req_cm2_m:.2f} cm²/m → ใช้ {result.reinf_label_temp} "
+                     f"(A<sub>st</sub> = {result.ast_provided_cm2_m:.2f} cm²/m, ระยะ ≤ {result.temp_spacing_max_cm:.0f} cm)"),
+         "result": "ผ่าน ✓" if result.temp_reinf_ok else "ไม่ผ่าน ✗"},
+        {"desc": "ตรวจสอบแรงเฉือน (Shear)",
+         "formula": "V<sub>u</sub> ≤ φV<sub>c</sub> = φ·0.53√f'<sub>c</sub>·b·d",
+         "sub": f"{result.vu_kg:,.0f} ≤ {result.phi_vc_kg:,.0f} kg",
+         "result": "ผ่าน ✓" if result.shear_ok else "ไม่ผ่าน ✗"},
+    ]
+    return [
+        {"title": "การวิเคราะห์น้ำหนักบรรทุกและความหนาพื้น (Load & Thickness)", "steps": load},
+        {"title": "การออกแบบเหล็กเสริมหลักรับแรงดัด (Flexural Design — Main Bars)", "steps": flex},
+        {"title": "เหล็กเสริมกันร้าวและแรงเฉือน (Temperature Steel & Shear)", "steps": other},
+    ]
 
 inject_card_css()
 st.header("1.2 พื้นทางเดียว (One-way Slab)")
@@ -238,6 +293,10 @@ if "ow_result" in st.session_state:
             st.write(f"เหล็กที่ใช้จริง: {result.reinf_label_temp} (Ast={result.ast_provided_cm2_m:.2f} cm²/m, "
                      f"ระยะห่างสูงสุด={result.temp_spacing_max_cm:.1f} cm.)")
             st.write("ผลตรวจสอบเหล็กเสริมรอง:", "ผ่าน ✅" if result.temp_reinf_ok else "ไม่ผ่าน ❌")
+
+    st.write("")
+    st.subheader("วิธีการคำนวณและสูตรที่ใช้")
+    render_calc_sheet(_build_calc_sections(inp, result))
 
     st.subheader("รูปขยายรายละเอียดการเสริมเหล็ก")
     end1_active = result.positions[0].active

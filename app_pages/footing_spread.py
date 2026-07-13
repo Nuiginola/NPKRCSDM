@@ -20,8 +20,68 @@ from common.project_store import consume_pending_load, save_item
 from common.report import build_footing_report_html
 from common.ui_style import (
     bar_type_label as _bar_type_label,
-    inject_card_css, input_card, metric_card_row,
+    inject_card_css, input_card, metric_card_row, render_calc_sheet,
 )
+
+
+def _build_calc_sections(inp, result):
+    """วิธีการคำนวณและสูตรที่ใช้ (ฐานรากแผ่เดี่ยว) — ดึงค่าจาก result (ไม่คำนวณซ้ำ)"""
+    geo = [
+        {"desc": "ขนาดฐานรากที่ต้องการ (จากแรงแบกทานดินยอมให้)",
+         "formula": "B<sub>req</sub> = √(P<sub>service</sub> / q<sub>a,net</sub>)",
+         "result": f"{result.b_req_m:.2f} m → ใช้จริง {result.B_cm:.0f}×{result.B_cm:.0f} cm"},
+        {"desc": "ตรวจสอบแรงแบกทานดิน (Bearing)",
+         "formula": "q<sub>actual</sub> = P<sub>service</sub>/A ≤ q<sub>a,net</sub>",
+         "sub": f"{result.q_actual_kg_m2:,.0f} ≤ {inp.qa_net_kg_m2:,.0f} kg/m²",
+         "result": "ผ่าน ✓" if result.bearing_ok else "ไม่ผ่าน ✗"},
+        {"desc": "ความหนาฐานรากและระยะประสิทธิผล",
+         "formula": f"แรงดันดินประลัย q<sub>u</sub> = {result.qu_factored_kg_m2:,.0f} kg/m²",
+         "result": f"t = {result.t_cm:.0f} cm (d<sub>x</sub> = {result.d_x_cm:.1f}, d<sub>y</sub> = {result.d_y_cm:.1f} cm)"},
+    ]
+    sx, sy, pu = result.shear_x, result.shear_y, result.punching
+    shear = [
+        {"desc": "แรงเฉือนทางเดียว แนว X (One-way / Beam shear)",
+         "formula": "V<sub>u</sub> ≤ φV<sub>c</sub> = φ·0.53√f'<sub>c</sub>·B·d",
+         "sub": f"{sx.vu_kg:,.0f} ≤ {sx.phi_vc_kg:,.0f} kg",
+         "result": "ผ่าน ✓" if sx.shear_ok else "ไม่ผ่าน ✗"},
+        {"desc": "แรงเฉือนทางเดียว แนว Y",
+         "formula": "V<sub>u</sub> ≤ φV<sub>c</sub>", "sub": f"{sy.vu_kg:,.0f} ≤ {sy.phi_vc_kg:,.0f} kg",
+         "result": "ผ่าน ✓" if sy.shear_ok else "ไม่ผ่าน ✗"},
+        {"desc": "แรงเฉือนทะลุรอบเสา (Punching / Two-way shear)",
+         "formula": (f"เส้นรอบรูปวิกฤต b<sub>o</sub> = {pu.bo_cm:.0f} cm , "
+                     f"φV<sub>c</sub> = φ·min(1.06, 0.53(1+2/β<sub>c</sub>))√f'<sub>c</sub>·b<sub>o</sub>·d"),
+         "sub": f"V<sub>u</sub> = {pu.vu_kg:,.0f} ≤ φV<sub>c</sub> = {pu.phi_vc_kg:,.0f} kg",
+         "result": "ผ่าน ✓" if pu.shear_ok else "ไม่ผ่าน ✗"},
+    ]
+    fx, fy = result.flex_x, result.flex_y
+
+    def _flex(f, label, dir_th):
+        return [
+            {"desc": f"โมเมนต์ดัดที่หน้าเสา — แนว {dir_th}",
+             "formula": "M<sub>u</sub> = ½·q<sub>u</sub>·(ระยะยื่น)²",
+             "sub": f"ระยะยื่น = {f.cant_m:.2f} m",
+             "result": f"{f.mu_kgm_per_m:,.0f} kg·m/m → R<sub>u</sub> = {f.ru_ksc:.2f} ksc"},
+            {"desc": f"เหล็กเสริมรับแรงดัด — แนว {dir_th}",
+             "formula": (f"A<sub>s</sub> = ρ·b·d (ρ = {f.rho_used:.4f}) = {f.as_req_cm2:.2f} cm² "
+                         f"→ ใช้ {label} (A<sub>s</sub> = {f.as_provided_cm2:.2f} cm²)"),
+             "result": "ผ่าน ✓" if f.reinf_ok else "ไม่ผ่าน ✗"},
+        ]
+    flex_steps = _flex(fx, result.reinf_label_x, "X") + _flex(fy, result.reinf_label_y, "Y")
+    other = [
+        {"desc": "เหล็กทาบ/เหล็กหนวดกุ้ง (Dowel bar)",
+         "formula": "ระยะฝัง L<sub>d</sub> ที่มีจริง ≥ L<sub>bd</sub> ที่ต้องการ",
+         "sub": f"{result.dowel.ld_avail_cm:.1f} ≥ {result.dowel.lbd_cm:.1f} cm",
+         "result": "ผ่าน ✓" if result.dowel.dowel_ok else "ไม่ผ่าน ✗"},
+        {"desc": "ผลการออกแบบโดยรวม",
+         "formula": "ผ่านทุกเกณฑ์ (แบกทานดิน, แรงเฉือน, เหล็กเสริม, เหล็กทาบ)",
+         "result": "ผ่าน ✓" if result.design_ok else "ไม่ผ่าน ✗"},
+    ]
+    return [
+        {"title": "ขนาดฐานรากและแรงแบกทานดิน (Sizing & Bearing)", "steps": geo},
+        {"title": "การตรวจสอบแรงเฉือน (Shear Checks — One-way & Punching)", "steps": shear},
+        {"title": "การออกแบบเหล็กเสริมรับแรงดัด (Flexural Design — X & Y)", "steps": flex_steps},
+        {"title": "เหล็กทาบและสรุปผล (Dowel & Summary)", "steps": other},
+    ]
 
 inject_card_css()
 st.header("5.1 ฐานรากแผ่เดี่ยว (Isolated Spread Footing)")
@@ -205,6 +265,10 @@ if "footing_result" in st.session_state:
             st.write("ผลตรวจสอบ:", "ผ่าน ✅" if result.dowel.dowel_ok else "ไม่ผ่าน ❌")
             st.markdown("**สรุปผล**")
             st.write("ผลตรวจสอบโดยรวม:", "ผ่าน ✅" if result.design_ok else "ไม่ผ่าน ❌")
+
+    st.write("")
+    st.subheader("วิธีการคำนวณและสูตรที่ใช้")
+    render_calc_sheet(_build_calc_sections(inp, result))
 
     st.subheader("แปลนฐานราก (Footing Plan)")
     plan_png = draw_footing_plan_png(

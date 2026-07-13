@@ -19,8 +19,57 @@ from common.project_store import consume_pending_load, save_item
 from common.report import build_cant_report_html
 from common.ui_style import (
     bar_type_label as _bar_type_label,
-    inject_card_css, input_card, metric_card_row,
+    inject_card_css, input_card, metric_card_row, render_calc_sheet,
 )
+
+
+def _build_calc_sections(inp, result):
+    """วิธีการคำนวณและสูตรที่ใช้ (พื้นยื่น) — ดึงค่าจาก result (ไม่คำนวณซ้ำ)"""
+    warn = " &nbsp;⚠️ หน้าตัดเล็กไป" if result.over_reinforced else ""
+    load = [
+        {"desc": "น้ำหนักบรรทุกประลัย (Factored load)",
+         "formula": "W<sub>u</sub> = 1.4(DL + SDL) + 1.7LL",
+         "sub": f"DL(พื้น)={result.dead_load_kg_m2:.0f}",
+         "result": f"{result.wu_kg_m2:.0f} kg/m²"},
+        {"desc": "น้ำหนักแนวกันตก/ผนังที่ปลายยื่น (Finishing load)",
+         "formula": "FIN = 1.4 × (น้ำหนักแนวกันตก)",
+         "result": f"{result.fin_kg_m:.0f} kg/m"},
+        {"desc": "ความหนาขั้นต่ำ (พื้นยื่น: S/10)",
+         "formula": "t<sub>min</sub> = (S/10)(0.40 + f<sub>y</sub>/7000)",
+         "result": f"{result.tmin_cm:.2f} cm — ใช้ t = {inp.t_cm:.1f} cm → " + ("ผ่าน ✓" if result.t_ok else "ไม่ผ่าน ✗")},
+    ]
+    flex = [
+        {"desc": "ระยะประสิทธิผล (Effective depth) d",
+         "formula": "d = t − ระยะหุ้ม − ⌀หลัก/2", "result": f"{result.d_cm:.1f} cm"},
+        {"desc": "อัตราส่วนเหล็กเสริม (Reinforcement ratios)",
+         "formula": (f"ρ<sub>min</sub> = {result.rho_min:.4f} &nbsp; ρ<sub>b</sub> = {result.rho_b:.4f} &nbsp; "
+                     f"ρ<sub>max</sub> = 0.75ρ<sub>b</sub> = {result.rho_max:.4f} &nbsp;(β₁ = {result.beta1:.3f})")},
+        {"desc": "โมเมนต์ลบที่จุดรองรับ (Fixed-end moment)",
+         "formula": "M<sub>u</sub> = ½·W<sub>u</sub>·S² + FIN·S",
+         "result": f"{result.mu_kgm:,.0f} kg·m/m → A<sub>s</sub>(จากโมเมนต์) = {result.as_req_flexure_cm2_m:.2f} cm²/m{warn}"},
+        {"desc": "พื้นที่เหล็กที่ใช้ออกแบบ (รวมเหล็กขั้นต่ำ 0.002bt)",
+         "formula": f"A<sub>s</sub> = max(A<sub>s,โมเมนต์</sub>, A<sub>st,min</sub> = {result.ast_min_main_cm2_m:.2f})",
+         "result": f"{result.as_req_governing_cm2_m:.2f} cm²/m"},
+        {"desc": "เลือกใช้เหล็กเสริมหลัก",
+         "formula": (f"ใช้ {result.reinf_label_main} &nbsp; (A<sub>s,จัดให้</sub> = {result.as_provided_cm2_m:.2f} cm²/m, "
+                     f"ระยะห่าง ≤ {result.main_spacing_max_cm:.0f} cm)"),
+         "result": "ผ่าน ✓" if result.main_reinf_ok else "ไม่ผ่าน ✗"},
+    ]
+    other = [
+        {"desc": "เหล็กเสริมกันร้าว/กระจายแรง",
+         "formula": (f"A<sub>st,ต้องการ</sub> = {result.ast_req_cm2_m:.2f} cm²/m → ใช้ {result.reinf_label_temp} "
+                     f"(A<sub>st</sub> = {result.ast_provided_cm2_m:.2f} cm²/m, ระยะ ≤ {result.temp_spacing_max_cm:.0f} cm)"),
+         "result": "ผ่าน ✓" if result.temp_reinf_ok else "ไม่ผ่าน ✗"},
+        {"desc": "ตรวจสอบแรงเฉือน (Shear)",
+         "formula": "V<sub>u</sub> = 1.15(W<sub>u</sub>·S + FIN) ≤ φV<sub>c</sub>",
+         "sub": f"{result.vu_kg:,.0f} ≤ {result.phi_vc_kg:,.0f} kg",
+         "result": "ผ่าน ✓" if result.shear_ok else "ไม่ผ่าน ✗"},
+    ]
+    return [
+        {"title": "การวิเคราะห์น้ำหนักบรรทุกและความหนาพื้น (Load & Thickness)", "steps": load},
+        {"title": "การออกแบบเหล็กเสริมหลักรับแรงดัด (Flexural Design — Main Bars)", "steps": flex},
+        {"title": "เหล็กเสริมกันร้าวและแรงเฉือน (Temperature Steel & Shear)", "steps": other},
+    ]
 
 inject_card_css()
 st.header("1.4 พื้นยื่น (Cantilever Slab)")
@@ -101,6 +150,10 @@ with col3:
         S = st.number_input("ความยาวยื่น S (m)", value=_loaded.get("S_m", 1.2), step=0.1, key=f"cs_S_{gen}")
         _t_idx = ALLOWED_THICKNESS_CM.index(_loaded["t_cm"]) if _loaded.get("t_cm") in ALLOWED_THICKNESS_CM else 1
         t = st.selectbox("ความหนาพื้น t (cm)", options=ALLOWED_THICKNESS_CM, index=_t_idx, key=f"cs_t_{gen}")
+        beam_ln = st.number_input(
+            "ความยาวคานรองรับ Ln (m)", value=_loaded.get("beam_ln_m", 3.0), step=0.1, key=f"cs_beamln_{gen}",
+            help="ความยาวคาน/ผนังที่รองรับขอบยึดแน่นของพื้นยื่น — ใช้แปลงแรงบิดกระจาย t_u เป็น T_u รวม "
+                 "(kg·m) = t_u×Ln/2 ในรายการคำนวณข้อ 8 เพื่อนำไปกรอกในโมดูลคาน")
 
 inp = CantileverSlabInput(
     fc_ksc=fc,
@@ -123,7 +176,7 @@ with bcol1:
     if st.button("🧮 คำนวณ (Compute)", key="npk-btn-compute-cs", type="primary", use_container_width=True):
         st.session_state["cant_input"] = inp
         st.session_state["cant_result"] = calc_cant(inp)
-        st.session_state["cant_project"] = {"slab_name": slab_name}
+        st.session_state["cant_project"] = {"slab_name": slab_name, "cant_beam_ln_m": beam_ln}
         mark_calc_pending_sync("cs")
 with bcol2:
     if st.button("💾 บันทึกรายการนี้", key="npk-btn-save-cs", use_container_width=True):
@@ -188,6 +241,10 @@ if "cant_result" in st.session_state:
                       "OK" if result.shear_ok else "ไม่ผ่าน")
             st.write(f"น้ำหนักลงคาน/ผนัง (Service): DL={result.dl_on_beam_kg_m:.0f} kg/m., "
                      f"LL={result.ll_on_beam_kg_m:.0f} kg/m.")
+
+    st.write("")
+    st.subheader("วิธีการคำนวณและสูตรที่ใช้")
+    render_calc_sheet(_build_calc_sections(inp, result))
 
     st.subheader("รูปขยายรายละเอียดการเสริมเหล็ก")
     section_png = draw_cant_section_png(

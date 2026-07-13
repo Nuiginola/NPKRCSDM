@@ -20,8 +20,69 @@ from common.project_store import consume_pending_load, save_item
 from common.report import build_stair_report_html
 from common.ui_style import (
     bar_type_label as _bar_type_label,
-    inject_card_css, input_card, metric_card_row,
+    inject_card_css, input_card, metric_card_row, render_calc_sheet,
 )
+
+
+def _build_calc_sections(inp, result):
+    """วิธีการคำนวณและสูตรที่ใช้ (บันไดช่วงตรง) — ดึงค่าจาก result (ไม่คำนวณซ้ำ)"""
+    d = next((p.d_cm for p in result.positions if p.active), result.positions[0].d_cm)
+    geo = [
+        {"desc": "ลูกตั้ง (Rise) และลูกนอน (Going)",
+         "formula": f"n = {inp.n_riser:.0f} ขั้น (ลูกนอน {result.n_going:.0f} ขั้น)",
+         "result": f"R = {result.rise_cm:.1f} cm, G = {result.going_cm:.1f} cm"},
+        {"desc": "มุมลาดและความยาวจริงตามแนวลาด",
+         "formula": "ความยาวลาด = √(ราบ² + สูง²)",
+         "result": f"มุมลาด {result.slope_deg:.1f}° , ความยาวลาด {result.incline_length_m:.2f} m"},
+    ]
+    load = [
+        {"desc": "น้ำหนักตัวเอง (Dead load)",
+         "formula": (f"DL = แผ่นพื้นเอียง (waist) {result.dead_load_waist_kg_m2:.0f} + "
+                     f"ขั้นบันได {result.dead_load_steps_kg_m2:.0f}"),
+         "result": f"{result.dead_load_self_kg_m2:.0f} kg/m²"},
+        {"desc": "น้ำหนักบรรทุกประลัย (Factored load)",
+         "formula": "W<sub>u</sub> = 1.4(DL + SDL) + 1.7LL",
+         "result": f"{result.wu_kg_m2:.0f} kg/m²"},
+        {"desc": "ความหนาแผ่นพื้นเอียงขั้นต่ำ (Minimum waist)",
+         "formula": "t<sub>min</sub> = (S/denom)(0.40 + f<sub>y</sub>/7000)",
+         "result": f"{result.tmin_cm:.2f} cm — ใช้ t = {inp.t_cm:.1f} cm → " + ("ผ่าน ✓" if result.t_ok else "ไม่ผ่าน ✗")},
+    ]
+    flex = [
+        {"desc": "ระยะประสิทธิผล (Effective depth) d",
+         "formula": "d = t − ระยะหุ้ม − ⌀หลัก/2", "result": f"{d:.1f} cm"},
+        {"desc": "อัตราส่วนเหล็กเสริม (Reinforcement ratios)",
+         "formula": (f"ρ<sub>min</sub> = {result.rho_min:.4f} &nbsp; ρ<sub>b</sub> = {result.rho_b:.4f} &nbsp; "
+                     f"ρ<sub>max</sub> = 0.75ρ<sub>b</sub> = {result.rho_max:.4f} &nbsp;(β₁ = {result.beta1:.3f})")},
+    ]
+    for p in result.positions:
+        if not p.active:
+            continue
+        warn = " &nbsp;⚠️ หน้าตัดเล็กไป" if p.over_reinforced else ""
+        flex.append({
+            "desc": f"โมเมนต์และเหล็กที่ตำแหน่ง: {p.label_th}",
+            "formula": (f"M<sub>u</sub> = {p.coeff:.4f}·W<sub>u</sub>·S² = {p.mu_kgm:,.0f} kg·m/m "
+                        f"→ A<sub>s</sub> = ρ·b·d = {p.as_req_cm2_m:.2f} cm²/m{warn}")})
+    flex.append({
+        "desc": "เลือกใช้เหล็กเสริมหลัก",
+        "formula": (f"ใช้ {result.reinf_label_main} &nbsp; (A<sub>s,จัดให้</sub> = {result.as_provided_cm2_m:.2f} cm²/m, "
+                    f"ระยะห่าง ≤ {result.main_spacing_max_cm:.0f} cm, {result.main_bar_count} เส้นตลอดความกว้าง)"),
+        "result": "ผ่าน ✓" if result.main_reinf_ok else "ไม่ผ่าน ✗"})
+    other = [
+        {"desc": "เหล็กเสริมกันร้าว/กระจายแรง",
+         "formula": (f"A<sub>st,ต้องการ</sub> = {result.ast_req_cm2_m:.2f} cm²/m → ใช้ {result.reinf_label_temp} "
+                     f"(A<sub>st</sub> = {result.ast_provided_cm2_m:.2f} cm²/m, ระยะ ≤ {result.temp_spacing_max_cm:.0f} cm)"),
+         "result": "ผ่าน ✓" if result.temp_reinf_ok else "ไม่ผ่าน ✗"},
+        {"desc": "ตรวจสอบแรงเฉือน (Shear)",
+         "formula": "V<sub>u</sub> ≤ φV<sub>c</sub> = φ·0.53√f'<sub>c</sub>·b·d",
+         "sub": f"{result.vu_kg:,.0f} ≤ {result.phi_vc_kg:,.0f} kg",
+         "result": "ผ่าน ✓" if result.shear_ok else "ไม่ผ่าน ✗"},
+    ]
+    return [
+        {"title": "เรขาคณิตบันได (Stair Geometry)", "steps": geo},
+        {"title": "การวิเคราะห์น้ำหนักบรรทุกและความหนา (Load & Thickness)", "steps": load},
+        {"title": "การออกแบบเหล็กเสริมหลักรับแรงดัด (Flexural Design — Main Bars)", "steps": flex},
+        {"title": "เหล็กเสริมกันร้าวและแรงเฉือน (Temperature Steel & Shear)", "steps": other},
+    ]
 
 inject_card_css()
 st.header("2.1 บันไดช่วงตรง (Straight-Run Stair)")
@@ -242,6 +303,10 @@ if "st_result" in st.session_state:
             st.write(f"น้ำหนักลงคานรวม (Service, ตลอดความกว้าง B={inp.width_m:.2f} m.): "
                      f"DL={result.dl_on_beam_total_kg:.0f} kg., LL={result.ll_on_beam_total_kg:.0f} kg.")
 
+    st.write("")
+    st.subheader("วิธีการคำนวณและสูตรที่ใช้")
+    render_calc_sheet(_build_calc_sections(inp, result))
+
     # หมายเหตุ (2026-07-11 รอบแปด): เดิมมี st.subheader("(6) แบบรายละเอียด — รูปด้านข้าง...")
     # ซ้ำกับหัวข้อ "(6) แบบรายละเอียด" ที่ฝังอยู่ในรูป section_png เอง (มุมซ้ายบน สีน้ำเงิน) —
     # เอาออกเพราะซ้ำซ้อน/ดูรกตามที่ผู้ใช้ทักท้วง ให้รูปเป็นผู้แสดงหัวข้อเองจุดเดียว
@@ -255,7 +320,10 @@ if "st_result" in st.session_state:
     if section_png is None:   # ไม่มีเทมเพลต -> วาดด้วยของเดิม
         section_png = draw_stair_section_png(
             inp.n_riser, result.rise_cm, result.going_cm, inp.t_cm, result.S_m)
-    st.image(section_png, use_container_width=True)
+    # ลดสัดส่วนการแสดงผลแบบขยายลง 30% (แสดงที่ 70% ของความกว้าง) ตามคำขอผู้ใช้ 2026-07-13
+    _sec_l, _sec_r = st.columns([7, 3])
+    with _sec_l:
+        st.image(section_png, use_container_width=True)
 
     st.caption(f"เหล็กเสริมหลัก (ตามแนวลาด) {result.reinf_label_main} — เหล็กเสริมรอง/กระจายแรง "
                f"{result.reinf_label_temp} (ตามแนวขั้น) เหล็กมุม/เหล็กยึดขึ้นใช้ขนาดเดียวกับเหล็กเสริมรอง "
