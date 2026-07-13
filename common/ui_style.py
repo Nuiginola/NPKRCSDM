@@ -400,6 +400,28 @@ input:disabled, textarea:disabled {{
   .npk-mc-badge { font-size:13.5px !important; padding:5px 12px !important; }
   [data-testid="stTable"] th, [data-testid="stTable"] td { font-size:14px !important; }
 }
+/* จอแคบลงอีก (แบ่งครึ่งจอ/ย่อเล็ก) — ย่อต่อเนื่อง + กันหัวข้อ/ป้ายสถานะแน่นจนอ่านไม่ออก */
+@media (max-width:820px) {
+  h1 { font-size:25px !important; }
+  h2 { font-size:17px !important; }
+  h3 { font-size:15.5px !important; }
+  label { font-size:12.5px !important; }
+  [class*="st-key-npk-ic-"] .npk-ic-header,
+  [class*="st-key-npk-ic-"] .npk-ic-header .tt { font-size:12.5px !important; padding-top:7px !important; padding-bottom:7px !important; }
+  .npk-mc-label { font-size:13.5px !important; }
+  .npk-mc-sym { font-size:12px !important; }
+  .npk-mc-value { font-size:19px !important; }
+  .npk-mc-note { font-size:12.5px !important; }
+  .npk-mc-badge { font-size:12.5px !important; padding:5px 10px !important; }
+  [data-testid="stTable"] th, [data-testid="stTable"] td { font-size:12.5px !important; }
+}
+@media (max-width:620px) {
+  h1 { font-size:21px !important; }
+  h2 { font-size:15.5px !important; }
+  h3 { font-size:14px !important; }
+  .npk-mc-value { font-size:17px !important; }
+  .npk-mc-badge { font-size:11.5px !important; padding:4px 9px !important; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -432,12 +454,16 @@ _BACK_TO_TOP_JS = r"""
     btn.type = 'button';
     btn.title = 'กลับสู่ด้านบน';
     btn.setAttribute('aria-label', 'กลับสู่ด้านบน');
-    btn.innerHTML = '⬆';
+    // ปุ่มทรงแคปซูล (pill) มีตัวหนังสือ "กลับสู่ด้านบน" กำกับข้างลูกศรเสมอ (ไม่ใช่แค่ tooltip
+    // ตอน hover เหมือนเดิม) — ผู้ใช้ขอให้เห็นข้อความบอกด้านข้างชัดเจน 2026-07-13
+    btn.innerHTML =
+      '<span style="font-size:18px; line-height:1;">⬆</span>' +
+      '<span style="font-size:15px; font-weight:700; white-space:nowrap;">กลับสู่ด้านบน</span>';
     btn.setAttribute('style',
       'position:fixed; right:22px; bottom:22px; z-index:2147483000;' +
-      'width:48px; height:48px; border-radius:50%; border:none; cursor:pointer;' +
-      'background:#0D9488; color:#ffffff; font-size:22px; font-weight:700;' +
-      'line-height:48px; text-align:center; padding:0;' +
+      'display:flex; align-items:center; gap:8px;' +
+      'height:48px; padding:0 20px 0 16px; border-radius:999px; border:none; cursor:pointer;' +
+      'background:#0D9488; color:#ffffff; font-family:inherit;' +
       'box-shadow:0 3px 12px rgba(0,0,0,.30);');
 
     // สำคัญ: ตั้ง onclick เป็น attribute (string) เพื่อให้รันในบริบทของ "หน้าแม่" โดยตรง
@@ -515,7 +541,7 @@ def inject_etabs_css() -> None:
     padding:11px 18px !important; margin:0 !important;
     border-bottom:1px solid #EEF1F5 !important;
 }}
-.etabs-lbl {{ font-size:16.5px; color:#334155; font-weight:500; white-space:nowrap; line-height:38px; }}
+.etabs-lbl {{ font-size:16.5px; color:#334155; font-weight:500; white-space:normal; overflow-wrap:break-word; line-height:1.3; }}
 .etabs-unit {{ font-size:15px; color:#475569; white-space:nowrap; line-height:38px; }}
 
 /* ===== ช่องกรอกตัวเลข: ชิดขวา, ซ่อนปุ่ม +/- ===== */
@@ -575,12 +601,23 @@ def inject_etabs_css() -> None:
 @media (max-width:1024px) {
   .etabs-chead { font-size:13.5px !important; padding:8px 12px !important; }
   .etabs-grp { font-size:12.5px !important; }
-  .etabs-lbl { font-size:13px !important; line-height:32px !important; }
+  .etabs-lbl { font-size:13px !important; line-height:1.3 !important; }
   .etabs-unit { font-size:12px !important; line-height:32px !important; }
   [class*="st-key-etabscard-"] [data-testid="stNumberInput"] input,
   [class*="st-key-etabscard-"] [data-testid="stTextInput"] input { font-size:14px !important; height:32px !important; min-height:32px !important; }
   [class*="st-key-etabscard-"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div { font-size:13.5px !important; height:32px !important; min-height:32px !important; }
   [class*="st-key-etabscard-"] [data-testid="stHorizontalBlock"] { padding:7px 12px !important; gap:12px !important; min-height:42px; }
+}
+/* จอแคบลงอีก — ย่อต่อเนื่อง (ให้สอดคล้องกับ inject_compact_input_css) */
+@media (max-width:820px) {
+  .etabs-chead { font-size:12.5px !important; padding:7px 10px !important; }
+  .etabs-grp { font-size:11.5px !important; }
+  .etabs-lbl { font-size:12px !important; line-height:1.3 !important; }
+  .etabs-unit { font-size:11px !important; line-height:30px !important; }
+  [class*="st-key-etabscard-"] [data-testid="stNumberInput"] input,
+  [class*="st-key-etabscard-"] [data-testid="stTextInput"] input { font-size:13px !important; height:30px !important; min-height:30px !important; }
+  [class*="st-key-etabscard-"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div { font-size:12.5px !important; height:30px !important; min-height:30px !important; }
+  [class*="st-key-etabscard-"] [data-testid="stHorizontalBlock"] { padding:6px 10px !important; gap:10px !important; min-height:38px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -749,7 +786,8 @@ def inject_compact_input_css(box_key: str) -> None:
 [class*="st-key-{box_key}"] [data-testid="stSelectbox"] > label p,
 [class*="st-key-{box_key}"] [data-testid="stTextInput"] > label p {{
     font-size:16.5px !important; font-weight:600 !important; color:{COLORS['field_label']} !important;
-    margin:0 !important; white-space:nowrap; line-height:1.25;
+    margin:0 !important; white-space:normal !important; overflow-wrap:break-word; word-break:break-word;
+    line-height:1.25;
 }}
 
 /* number input: ชิดขวา ความกว้างคงที่ (ขยายให้พอกับตัวเลขที่ใหญ่ขึ้น) */
@@ -817,6 +855,39 @@ def inject_compact_input_css(box_key: str) -> None:
   [class*="st-key-BOXKEY"] [data-testid="stSelectbox"],
   [class*="st-key-BOXKEY"] [data-testid="stTextInput"] { padding:7px 12px !important; min-height:42px; gap:12px !important; }
 }
+/* จอแคบลงอีก (แบ่งครึ่งจอ/ย่อเล็ก) — ย่อต่อเนื่อง กันช่องกรอกแน่นจนอ่านไม่ออก */
+@media (max-width:820px) {
+  [class*="st-key-BOXKEY"] [data-testid="stNumberInput"] > label p,
+  [class*="st-key-BOXKEY"] [data-testid="stSelectbox"] > label p,
+  [class*="st-key-BOXKEY"] [data-testid="stTextInput"] > label p { font-size:12.5px !important; }
+  [class*="st-key-BOXKEY"] [data-testid="stNumberInput"] input,
+  [class*="st-key-BOXKEY"] [data-testid="stTextInput"] input { font-size:13px !important; height:30px !important; min-height:30px !important; }
+  [class*="st-key-BOXKEY"] [data-testid="stSelectbox"] div[data-baseweb="select"] > div { font-size:12.5px !important; height:30px !important; min-height:30px !important; }
+  [class*="st-key-BOXKEY"] [data-testid="stNumberInputContainer"] { flex:0 0 90px !important; width:90px !important; max-width:90px !important; }
+  [class*="st-key-BOXKEY"] [data-testid="stSelectbox"] > div[data-baseweb="select"] { flex:0 0 120px !important; width:120px !important; }
+  [class*="st-key-BOXKEY"] [data-testid="stTextInput"] > div { flex:0 0 110px !important; width:110px !important; }
+  [class*="st-key-BOXKEY"] [data-testid="stNumberInput"],
+  [class*="st-key-BOXKEY"] [data-testid="stSelectbox"],
+  [class*="st-key-BOXKEY"] [data-testid="stTextInput"] { padding:6px 10px !important; min-height:38px; gap:10px !important; }
+}
+/* จอแคบมาก (ย่อเล็กสุด/แบ่งจอแคบมาก): สลับเป็น label อยู่บรรทัดบน เต็มความกว้าง
+   แล้วช่องกรอกอยู่บรรทัดล่าง เต็มความกว้าง — กันทั้ง label และช่องกรอกถูกบีบจนอ่าน/กดไม่ได้
+   (แทนที่จะพยายามยัดทุกอย่างในแถวเดียวต่อไปเรื่อยๆ) */
+@media (max-width:620px) {
+  [class*="st-key-BOXKEY"] [data-testid="stNumberInput"],
+  [class*="st-key-BOXKEY"] [data-testid="stSelectbox"],
+  [class*="st-key-BOXKEY"] [data-testid="stTextInput"] {
+    flex-wrap:wrap !important; align-items:flex-start !important; row-gap:6px !important;
+  }
+  [class*="st-key-BOXKEY"] [data-testid="stNumberInput"] > label,
+  [class*="st-key-BOXKEY"] [data-testid="stSelectbox"] > label,
+  [class*="st-key-BOXKEY"] [data-testid="stTextInput"] > label { flex:1 1 100% !important; }
+  [class*="st-key-BOXKEY"] [data-testid="stNumberInputContainer"] { flex:1 1 100% !important; width:100% !important; max-width:100% !important; }
+  [class*="st-key-BOXKEY"] [data-testid="stSelectbox"] > div[data-baseweb="select"] { flex:1 1 100% !important; width:100% !important; }
+  [class*="st-key-BOXKEY"] [data-testid="stTextInput"] > div { flex:1 1 100% !important; width:100% !important; }
+  [class*="st-key-BOXKEY"] [data-testid="stNumberInput"] input,
+  [class*="st-key-BOXKEY"] [data-testid="stTextInput"] input { text-align:left !important; }
+}
 </style>
 """.replace("BOXKEY", box_key)
     st.markdown(_resp, unsafe_allow_html=True)
@@ -827,3 +898,83 @@ def bar_type_label(k: str) -> str:
     ในกล่องกระชับ — ใช้คำสั้นแทนข้อความเต็ม (เดิม "DB (เหล็กข้ออ้อย)") เพราะกล่อง
     selectbox ถูกจำกัดความกว้างไว้ที่ 190px ข้อความยาวจะถูกตัด/ล้น"""
     return "DB" if k == "DB" else "RB"
+
+
+# ===========================================================================
+# แผ่นแสดงวิธีการคำนวณ (Calculation Sheet) — สไตล์วิศวกรมืออาชีพ (2026-07-13)
+# helper กลางที่ทุกโมดูลใช้ร่วมกัน เพื่อแสดง "ที่มา/สูตร/การแทนค่า/ผลลัพธ์" ของการออกแบบ
+# แต่ละขั้นตอน — โมดูลต้องส่ง "ค่าที่คำนวณเสร็จแล้ว" (จาก result ของ calculate()) เข้ามา
+# ห้ามคำนวณตัวเลขซ้ำในนี้ (กันเลขไม่ตรงกับที่โมดูลใช้จริง) helper แค่จัดรูปแบบการแสดงผล
+# ===========================================================================
+_CALC_SHEET_CSS = """
+<style>
+.npk-calc-sec { border:1px solid #D8DEE7; border-radius:8px; overflow:hidden;
+    margin-bottom:14px; box-shadow:0 1px 2px rgba(15,23,42,.05); }
+.npk-calc-head { background:#1E3853; color:#fff; font-weight:700; font-size:15.5px;
+    padding:10px 16px; letter-spacing:.2px; }
+.npk-calc-tbl { width:100%; border-collapse:collapse; background:#fff; }
+.npk-calc-tbl td { border-bottom:1px solid #EEF1F5; padding:9px 14px; vertical-align:top; }
+.npk-calc-tbl tr:last-child td { border-bottom:none; }
+.npk-calc-no { width:34px; color:#94A3B8; font-weight:800; font-size:14px;
+    text-align:center; font-family:'Segoe UI',Tahoma,sans-serif; }
+.npk-calc-desc { font-size:13.5px; color:#475569; font-weight:600; margin-bottom:4px; }
+.npk-calc-eq { font-family:'Consolas','Menlo','Courier New',monospace; font-size:14px;
+    color:#0F172A; line-height:1.65; }
+.npk-calc-eq .r { color:#1D4ED8; font-weight:700; }
+.npk-calc-eq .r.pass { color:#15803D; font-weight:800; font-size:1.2em; }
+.npk-calc-eq .r.fail { color:#B91C1C; font-weight:800; font-size:1.2em; }
+.npk-calc-eq .op { color:#64748B; }
+.npk-calc-note { font-size:12.5px; color:#B45309; margin-top:4px; }
+@media (max-width:1024px){ .npk-calc-eq{ font-size:12.5px; } .npk-calc-desc{ font-size:12.5px; } }
+</style>
+"""
+
+
+def render_calc_sheet(sections: list) -> None:
+    """แสดง 'แผ่นแสดงวิธีการคำนวณ' สไตล์วิศวกร — เรียกครั้งเดียวต่อหน้า (หลังการ์ดสรุปผล)
+
+    sections: list ของ dict:
+      {
+        "title": ชื่อกลุ่ม เช่น "การออกแบบเหล็กรับแรงดัด (Flexural Design)",
+        "steps": [
+           {"desc": คำอธิบายขั้นตอน (ไทย),
+            "formula": สูตรสัญลักษณ์ (รองรับ HTML/Unicode เช่น φ ρ √ ² · ≤ <br>),
+            "sub": การแทนค่าตัวเลข (ไม่บังคับ),
+            "result": ผลลัพธ์ที่เน้นสีน้ำเงิน (ไม่บังคับ),
+            "note": หมายเหตุ/คำเตือน (ไม่บังคับ) },
+           ...
+        ]
+      }
+
+    ผลลัพธ์แต่ละบรรทัดต่อกันเป็น: สูตร = แทนค่า = ผลลัพธ์(เน้น) โดยส่วนที่ไม่ได้ใส่จะถูกข้าม
+    """
+    html = [_CALC_SHEET_CSS]
+    for sec in sections:
+        html.append('<div class="npk-calc-sec">')
+        html.append(f'<div class="npk-calc-head">{sec.get("title","")}</div>')
+        html.append('<table class="npk-calc-tbl">')
+        for i, step in enumerate(sec.get("steps", []), start=1):
+            eq_parts = []
+            if step.get("formula"):
+                eq_parts.append(step["formula"])
+            if step.get("sub"):
+                eq_parts.append('<span class="op">=</span> ' + step["sub"])
+            if step.get("result"):
+                # ผลลัพธ์ที่เป็นสถานะ "ผ่าน" -> เขียว/ใหญ่, "ไม่ผ่าน" -> แดง/ใหญ่ (ตรวจ "ไม่ผ่าน" ก่อน
+                # เพราะมีคำว่า "ผ่าน" ซ้อนอยู่) อื่นๆ เป็นค่าตัวเลขทั่วไป -> น้ำเงินตามเดิม
+                res = step["result"]
+                rcls = "r"
+                if "ไม่ผ่าน" in res or "เล็กเกินไป" in res:
+                    rcls = "r fail"
+                elif "ผ่าน" in res:
+                    rcls = "r pass"
+                eq_parts.append(f'<span class="op">=</span> <span class="{rcls}">' + res + '</span>')
+            eq = ' '.join(eq_parts)
+            desc = f'<div class="npk-calc-desc">{step["desc"]}</div>' if step.get("desc") else ""
+            note = f'<div class="npk-calc-note">{step["note"]}</div>' if step.get("note") else ""
+            html.append(
+                f'<tr><td class="npk-calc-no">{i}</td>'
+                f'<td class="npk-calc-body">{desc}<div class="npk-calc-eq">{eq}</div>{note}</td></tr>'
+            )
+        html.append('</table></div>')
+    st.markdown("".join(html), unsafe_allow_html=True)
