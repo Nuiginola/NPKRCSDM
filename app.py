@@ -543,6 +543,28 @@ def _inject_home_css() -> None:
         .npk-summary-label { font-size: 0.86rem; }
         .npk-summary-count { font-size: 0.8rem; }
     }
+    /* ===== แท็บเล็ต/มือถือ: จัดการ์ดหมวดให้พอดี ไม่เบียด/ไม่ตัดกลางคำ ===== */
+    @media (max-width: 1200px) {
+        /* ไม่ให้คำอังกฤษ (Slab/Beam/Column ...) ถูกตัดกลางคำ */
+        .npk-card-header h3, .npk-card-desc,
+        [class*="st-key-card-"] [data-testid="stPageLink"] p,
+        [class*="st-key-npk-cards-row"] [data-testid="stPageLink"] p {
+            word-break: keep-all !important; overflow-wrap: normal !important; hyphens: none !important;
+        }
+        [class*="st-key-topbar_open_pop"] button,
+        [class*="st-key-topbar_save_btn"] button { white-space: nowrap !important; }
+        /* การ์ด 5 อัน -> จัด 2 อันต่อแถว (ไม่เบียด) */
+        [class*="st-key-npk-cards-row"] [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
+        [class*="st-key-npk-cards-row"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+            flex: 1 1 46% !important; min-width: 46% !important;
+        }
+    }
+    /* มือถือแคบ: การ์ด 1 อันต่อแถว */
+    @media (max-width: 640px) {
+        [class*="st-key-npk-cards-row"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+            flex: 1 1 100% !important; min-width: 100% !important;
+        }
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -765,14 +787,15 @@ def home():
 
             st.write("")
 
-            cat_cols = st.columns(5)
-            for (num, name, icon_key, _emoji, desc, module_keys), col in zip(CATEGORY_DEFS, cat_cols):
-                with col:
-                    with st.container(border=True, key=f"card-{icon_key}"):
-                        _card_header(num, name, desc)
-                        _card_illustration(icon_key)
-                        for mk in module_keys:
-                            st.page_link(_module_pages_by_key[mk], label=_bilingual_label(mk))
+            with st.container(key="npk-cards-row"):
+                cat_cols = st.columns(5)
+                for (num, name, icon_key, _emoji, desc, module_keys), col in zip(CATEGORY_DEFS, cat_cols):
+                    with col:
+                        with st.container(border=True, key=f"card-{icon_key}"):
+                            _card_header(num, name, desc)
+                            _card_illustration(icon_key)
+                            for mk in module_keys:
+                                st.page_link(_module_pages_by_key[mk], label=_bilingual_label(mk))
 
         with col_right:
             _summary_panel()
