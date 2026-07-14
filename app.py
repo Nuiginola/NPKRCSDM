@@ -135,6 +135,7 @@ def _img_base64(path: Path) -> str:
 _LOGIN_CREDENTIALS = {
     "PTUCE66": "6601430154032",
     "NPK90s": "1515021259",
+    "NPK90S": "1515120259",
 }
 
 
