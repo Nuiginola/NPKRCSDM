@@ -1,0 +1,154 @@
+================================================================================
+  วิธีสร้าง NSIS Installer สำหรับ NPK RC SDM
+================================================================================
+
+📋 ไฟล์ที่จำเป็น:
+  • build_installer.bat - สคริปต์สร้าง installer (อยู่ที่ code folder)
+
+================================================================================
+  ขั้นตอนการสร้าง Installer
+================================================================================
+
+1️⃣  เปิด Command Prompt ที่โฟลเดอร์นี้:
+    C:\Users\NUI\OneDrive\NPK RC SDM\code
+
+2️⃣  Right-click ไฟล์ build_installer.bat
+    → เลือก "Run as Administrator"
+
+3️⃣  รอให้สคริปต์ทำงาน (จะใช้เวลา 5-15 นาที):
+    - ขั้นตอนที่จะ execute:
+      [STEP 1] ก้อป application files
+      [STEP 2] ดาวน์โหลด Embedded Python 3.11 (30MB)
+      [STEP 3] แตกไฟล์ Python
+      [STEP 4] ติดตั้ง packages (streamlit, matplotlib ฯลฯ)
+      [STEP 5] สร้าง launcher scripts
+      [STEP 6] ดาวน์โหลด NSIS
+      [STEP 7] สร้าง NSIS script
+      [STEP 8] Build .exe installer
+      [STEP 9] แบ่งไฟล์เป็น 3 ส่วน
+
+4️⃣  เมื่อเสร็จ จะมีไฟล์ 3 ส่วนใน:
+    C:\Users\NUI\OneDrive\NPK RC SDM\code\installer_build\output\
+
+    ไฟล์ที่สร้าง:
+    - NPK_RC_SDM_Setup_split.z01 (30MB)
+    - NPK_RC_SDM_Setup_split.z02 (30MB)
+    - NPK_RC_SDM_Setup_split.zip  (ส่วนที่เหลือ)
+
+================================================================================
+  เกิดขึ้นในระหว่างการสร้าง
+================================================================================
+
+✅ ส่วนที่ script ทำให้:
+  ✓ ก้อป source code ทั้งหมด (app.py, modules/, common/, data/ ฯลฯ)
+  ✓ ดาวน์โหลด Embedded Python 3.11 (ไม่ต้องติดตั้งระบบ)
+  ✓ ติดตั้ง dependencies (streamlit, matplotlib, numpy, pandas ฯลฯ)
+  ✓ สร้าง launcher batch scripts
+  ✓ ติดตั้ง NSIS (Nullsoft Scriptable Install System)
+  ✓ สร้าง NSIS installer script
+  ✓ Build .exe installer (~67MB)
+  ✓ แบ่งเป็น 3 ส่วนเพื่อส่ง
+
+🗂️  โครงสร้างที่สร้างขึ้น:
+  installer_build/
+  ├── app/                  # โปรแกรมและ Python packages
+  │   ├── app.py
+  │   ├── common/
+  │   ├── modules/
+  │   ├── pages/
+  │   ├── app_pages/
+  │   ├── data/
+  │   ├── launcher.bat      # Launcher script
+  │   ├── launcher.vbs      # Silent launcher
+  │   └── site-packages/    # All Python packages
+  ├── python_setup/         # Embedded Python
+  │   └── python.exe
+  ├── nsis/                 # NSIS installer script
+  │   └── NPK_RC_SDM.nsi
+  └── output/               # ผลลัพธ์สุดท้าย
+      ├── NPK_RC_SDM_Setup.exe (original, ~67MB)
+      ├── NPK_RC_SDM_Setup_split.z01 (30MB)
+      ├── NPK_RC_SDM_Setup_split.z02 (30MB)
+      └── NPK_RC_SDM_Setup_split.zip (remaining)
+
+================================================================================
+  การใช้ Installer (สำหรับผู้ติดตั้ง)
+================================================================================
+
+🔧 วิธีติดตั้ง:
+  1. โหลดไฟล์ทั้ง 3 ส่วน (.z01, .z02, .zip)
+  2. วางในโฟลเดอร์เดียวกัน
+  3. Double-click ไฟล์ .zip เพื่อแตกไฟล์
+     (Windows จะรวม 3 ส่วนเป็น NPK_RC_SDM_Setup.exe อัตโนมัติ)
+  4. รัน NPK_RC_SDM_Setup.exe
+  5. ติดตั้งเสร็จ → ปรากฏ shortcut ที่ Desktop และ Start Menu
+
+📁 ติดตั้งไปที่:
+  %LOCALAPPDATA%\NPK_RC_SDM
+  (ปกติ: C:\Users\[username]\AppData\Local\NPK_RC_SDM)
+
+✅ ทำให้:
+  ✓ ไม่ต้อง admin rights
+  ✓ ไม่มีการแก้ไข system
+  ✓ ทำความสะอาดได้ง่าย (ลบโฟลเดอร์หรือใช้ uninstaller)
+
+================================================================================
+  ปัญหาและวิธีแก้
+================================================================================
+
+❌ "Run as Administrator ไม่ทำงาน"
+   → วิธี: เปิด Command Prompt as Admin → พิมพ์
+      cd /d "C:\Users\NUI\OneDrive\NPK RC SDM\code"
+      build_installer.bat
+
+❌ "ดาวน์โหลด Python ไม่สำเร็จ"
+   → เช็คการเชื่อมต่ออินเทอร์เน็ต
+   → ลองอีกครั้ง (network อาจมีปัญหาชั่วคราว)
+
+❌ "NSIS ไม่เจอ"
+   → ติดตั้ง NSIS ด้วยตัวเอง:
+      - ไปที่ https://nsis.sourceforge.io/
+      - ดาวน์โหลด NSIS installer
+      - รันติดตั้ง
+      - รัน build_installer.bat อีกครั้ง
+
+❌ "Build NSIS ไม่สำเร็จ"
+   → ลบโฟลเดอร์ installer_build ออก
+   → รัน build_installer.bat ใหม่
+
+================================================================================
+  ขนาดไฟล์คาดหวัง
+================================================================================
+
+Embedded Python 3.11    : ~30MB
+Application code        : ~50KB
+Python packages         : ~200MB
+Installer .exe          : ~70MB (หลังรวมความกด)
+
+ไฟล์แบ่งเป็น 3 ส่วน:
+  - .z01: 30MB
+  - .z02: 30MB
+  - .zip: ~10MB
+
+รวม: ~70MB
+
+================================================================================
+  หมายเหตุ
+================================================================================
+
+• ครั้งแรกต้องมี Internet (ดาวน์โหลด Python, NSIS, packages)
+• ระยะเวลา: 5-15 นาที (ขึ้นกับความเร็ว Internet และเครื่อง)
+• ถ้ามี cache ครั้งแรกแล้ว ครั้งต่อจะเร็วขึ้น
+• ไฟล์ installer ประมาณ 70MB เป็นปกติ (รวม Python + packages)
+• NSIS ที่ติดตั้งสามารถใช้สร้าง installer อื่นได้เรื่อยๆ
+
+================================================================================
+  ไฟล์เอกสารอ้างอิง
+================================================================================
+
+• NSIS Documentation: https://nsis.sourceforge.io/
+• Embedded Python: https://www.python.org/downloads/
+• Streamlit: https://docs.streamlit.io/
+• Matplotlib: https://matplotlib.org/
+
+================================================================================
